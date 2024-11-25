@@ -8,6 +8,5 @@ public record UserRegistrationResponseDTO(String id,
                                           String name,
                                           String email,
                                           String password,
-                                          Set<Role> roles,
                                           String token) {
 }
