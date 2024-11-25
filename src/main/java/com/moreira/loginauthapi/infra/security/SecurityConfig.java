@@ -33,7 +33,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authorize -> authorize
                         .requestMatchers(HttpMethod.POST, "/auth/login").permitAll()
                         .requestMatchers(HttpMethod.POST, "/users/register").permitAll()
-                        .anyRequest().authenticated()
+                        .requestMatchers(HttpMethod.PUT, "/users/**").hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.DELETE, "/users/**").hasRole("ADMIN")
+                        .anyRequest().authenticated() //qualquer outra requisicao, tem que estar autenticado
 
                         //caso queira liberar endpoint do H2
                         //.requestMatchers("/h2-console/**").permitAll()

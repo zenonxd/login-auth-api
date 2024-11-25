@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
 
 import java.net.URI;
+import java.nio.file.AccessDeniedException;
 
 @RestController
 @RequestMapping(value = "/users")
@@ -34,6 +35,7 @@ public class UserController {
         return ResponseEntity.created(uri).body(responseDTO);
     }
 
+    @PreAuthorize("hasRole('COMMON')")
     @GetMapping
     public ResponseEntity<Page<UserPageableResponseDTO>> findAllPageable(Pageable pageable) {
         Page<UserPageableResponseDTO> users = userService.findAllPageable(pageable);
@@ -41,6 +43,7 @@ public class UserController {
         return ResponseEntity.ok(users);
     }
 
+    @PreAuthorize("hasRole('COMMON')")
     @GetMapping(value = "/{id}")
     public ResponseEntity<UserInformationsResponseDTO> findById(@PathVariable String id) {
         UserInformationsResponseDTO response = userService.findById(id);
@@ -48,6 +51,7 @@ public class UserController {
         return ResponseEntity.ok(response);
     }
 
+    @PreAuthorize("hasRole('ADMIN')")
     @PutMapping(value = "/{id}")
     public ResponseEntity<UserChangesResponseDTO> update(@PathVariable String id, @RequestBody UserChangesRequestDto userChangesRequestDto) {
         UserChangesResponseDTO userChanged = userService.update(id, userChangesRequestDto);
@@ -55,7 +59,19 @@ public class UserController {
         return ResponseEntity.ok(userChanged);
     }
 
-    @DeleteMapping(value = "/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    @PutMapping(value = "/insert-role/{id}")
+    public ResponseEntity<UserWithNewRoleResponseDTO> insertRoleOnUser(@PathVariable String id,
+                                                                      @RequestBody UserWithNewRoleRequestDTO userWithNewRoleRequestDTO) throws AccessDeniedException {
+
+        UserWithNewRoleResponseDTO userWithNewRole = userService.insertRoleOnUser(id, userWithNewRoleRequestDTO);
+
+        return ResponseEntity.ok(userWithNewRole);
+
+    }
+
+    @PreAuthorize("hasRole('ADMIN')")
+    @DeleteMapping(value = "{id}")
     public ResponseEntity<Void> deleteById(@PathVariable String id) {
         userService.deleteById(id);
 
