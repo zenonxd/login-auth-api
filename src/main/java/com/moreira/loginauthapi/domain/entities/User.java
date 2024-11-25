@@ -25,9 +25,7 @@ public class User {
     private String email;
     private String password;
 
-    @ManyToOne
-    @JoinColumn(name = "primary_role") // Refere-se à coluna role_id em tb_user
-    private Role primaryRole;
+    private String role;
 
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
@@ -37,4 +35,11 @@ public class User {
 
     )
     private Set<Role> roles = new HashSet<>();
+
+    @PrePersist
+    public void setDefaultRol() {
+        if (this.role == null) {
+            this.role = "ROLE_COMMON";
+        }
+    }
 }
