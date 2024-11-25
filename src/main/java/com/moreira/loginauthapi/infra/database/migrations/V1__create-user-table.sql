@@ -11,10 +11,5 @@ CREATE TABLE tb_user (
     id VARCHAR DEFAULT gen_random_uuid() PRIMARY KEY,
     name VARCHAR(30) NOT NULL,
     email VARCHAR(30) NOT NULL,
-    password VARCHAR(100) NOT NULL,
-    role_id varchar,
-    CONSTRAINT fk_role
-                     FOREIGN KEY (role_id)
-                     REFERENCES tb_role(id)
-                     ON DELETE SET NULL
+    password VARCHAR(100) NOT NULL
 );
