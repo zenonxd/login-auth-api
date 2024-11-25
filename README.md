@@ -80,7 +80,8 @@ com.moreira.picpaychallenge
 
 Ficará no pacote infra.config.
 
-O primeiro método dele será o método responsável por gerar/criar o Token quando o usuário fizer login/registro.
+O primeiro método dele será o método responsável por gerar/criar o Token quando o usuário fizer login/registro, se
+chamará ``generateToken(User user)``.
 
 Iremos criar um try-catch (JWTCreationException).
 
@@ -96,7 +97,7 @@ Essa chave privada do nosso servidor será responsável por isso: criptografar e
 Criaremos uma ``private String secret``. (O valor dela virá do .properties) e podemos definir através da variável de
 ambiente.
 
-Agora sim, podemos gerar o nosso token, será do tipo String, utilizando:
+Agora sim, podemos gerar o nosso token, será do tipo String, dentro do try:
 
 ```java
 JWT.create()
@@ -111,12 +112,20 @@ JWT.create()
 return token
 ```
 
+Depois no catch, iremos capturar a JWTCreationException, lançando uma exceção (Runtime ou customizada).
+
 Criaremos também um método auxiliar para settar o tempo de expiração do token.
 
 Será um método privado, que irá retornar um instant! Seu nome pode ser ``generateExpirationDate``, vai retornar um
-``LocalDateTime.now().plusHours(2).toInstant(ZoneOffset.of(3))`` < tem que confirmar se é 3 mesmo.
+``LocalDateTime.now().plusHours(2).toInstant(ZoneOffset.of("-03:00"))``.
 
 Inserir o método no ``.withExpiresAt()``.
+
+```java
+    private Instant generateExpirationDate() {
+        return LocalDateTime.now().plusHours(2).toInstant(ZoneOffset.of("-03:00"));
+    }
+```
 
 ## Validando Token
 
@@ -124,9 +133,12 @@ Será um método que retornará uma String, se chamará ``validateToken``. Receb
 
 Faremos um try-catch, pois caso dê algum erro o JWT irá retornar uma exceção (JWTVerificationException).
 
-Caso caia no catch, retornaremos somente null. Será null, pois caso a gente consiga validar no try, irá ser retornado
-o email do usuário (que está nesse token). Caso caia null, eventualmente iremos fazer uma função no filter chain (uma
-cadeira de segurança que será criada), onde irá dizer que o usuário não foi autenticado.
+Caso caia no catch, retornaremos somente null. 
+
+Será null, pois caso a gente consiga validar no try, irá ser retornado o email do usuário (que está nesse token). 
+
+Caso caia null, eventualmente iremos fazer uma função no filter chain (uma cadeia de segurança que será criada), onde 
+irá dizer que o usuário não foi autenticado.
 
 O try ficará a mesma coisa do método de criação. Iremos instanciar um Algorithm com a secretKey e retornaremos
 ```java
@@ -138,7 +150,52 @@ JWT.require(algorithm)
     .getSubject()
 ```
 
-# SecurityFilter
+### Classe final
+
+```java
+@Service
+public class TokenService {
+
+   @Value("${secretKey}")
+   private String secret;
+
+   public String generateToken(User user) {
+
+      try {
+         Algorithm algorithm = Algorithm.HMAC256(secret);
+         String token = JWT.create()
+                 .withIssuer("login-auth-api")
+                 .withSubject(user.getEmail())
+                 .withExpiresAt(generateExpirationDate())
+                 .sign(algorithm);
+         return token;
+
+      } catch (JWTCreationException e) {
+         throw new RuntimeException("Error while authenticating user");
+      }
+   }
+
+   public String validateToken(String token) {
+
+      try {
+         Algorithm algorithm = Algorithm.HMAC256(secret);
+         return JWT.require(algorithm)
+                 .withIssuer("login-auth-api")
+                 .build()
+                 .verify(token)
+                 .getSubject();
+      } catch (JWTVerificationException e) {
+         return null;
+      }
+   }
+
+   private Instant generateExpirationDate() {
+      return LocalDateTime.now().plusHours(2).toInstant(ZoneOffset.of("-03:00"));
+   }
+}
+```
+
+# SecurityFilter (Detalhar o método depois)
 
 Também ficará em infra.security.
 
@@ -149,35 +206,50 @@ Ele será algo padronizado, portanto, é só inserir o código abaixo:
 ```java
 @Component
 public class SecurityFilter extends OncePerRequestFilter {
-    @Autowired
-    TokenService tokenService;
-    @Autowired
-    UserRepository userRepository;
 
-    @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
-        var token = this.recoverToken(request);
-        var login = tokenService.validateToken(token);
+   @Autowired
+   private TokenService tokenService;  // Servico para gerar e validar o JWT
 
-        if(login != null){
-            //passamos o OrElseThrow pois estamos retornando um Optional de User no repository
-            User user = userRepository.findByEmail(login).orElseThrow(() -> new RuntimeException("User Not Found"));
-            var authorities = Collections.singletonList(new SimpleGrantedAuthority("ROLE_USER"));
-            var authentication = new UsernamePasswordAuthenticationToken(user, null, authorities);
-            SecurityContextHolder.getContext().setAuthentication(authentication);
-        }
-        filterChain.doFilter(request, response);
-    }
+   @Autowired
+   private UserRepository userRepository;
 
-    private String recoverToken(HttpServletRequest request){
-        var authHeader = request.getHeader("Authorization");
-        if(authHeader == null) return null;
-        return authHeader.replace("Bearer ", "");
-    }
+   @Override
+   protected void doFilterInternal(HttpServletRequest request,
+                                   HttpServletResponse response,
+                                   FilterChain filterChain) throws ServletException, IOException {
+
+      var token = this.recoverToken(request);
+      var login = tokenService.validateToken(token);
+
+      if (login != null) {
+         // Aqui o ideal é buscar o usuário no banco de dados para adicionar suas roles
+         User user = userRepository.findByEmail(login)
+                 .orElseThrow(() -> new RuntimeException("User not found"));
+
+         //Gerar as roles diretamente a partir das claims no token
+         List<SimpleGrantedAuthority> authorities = user.getRoles().stream()
+                 .map(role -> new SimpleGrantedAuthority(role.getName()))
+                 .collect(Collectors.toList());
+
+
+         var authentication = new UsernamePasswordAuthenticationToken(login, null, authorities);
+         SecurityContextHolder.getContext().setAuthentication(authentication);
+      }
+      filterChain.doFilter(request, response);
+   }
+
+   private String recoverToken(HttpServletRequest request) {
+      var bearerToken = request.getHeader("Authorization");
+      if (bearerToken != null && bearerToken.startsWith("Bearer ")) {
+         return bearerToken.replace("Bearer ", "");
+      }
+
+      return null;
+   }
 }
 ```
 
-## Entendendo a extensão.
+## Entendendo a extensão
 
 ### OncePerRequestFilter
 
@@ -187,11 +259,10 @@ irá agir antes, autenticando ou não o usuário.
 
 ## Entendendo métodos
 
-
 ### Recover Token
 
-Método auxiliar. Recebe o request (que veio do usuário), pega a header (authorization) e testa para ver se ela está 
-nula.
+Método auxiliar. Recebe um HttpServletRequest (que veio do usuário), pega a header (authorization) e testa para ver se
+ela está nula.
 
 Entenda, se você muda onde você passa o token (para o body, por exemplo), você precisa mudar essa função (recoverToken).
 
@@ -203,33 +274,30 @@ O que nós fazemos no replace, é retirar esse Bearer, deixando somente o token:
 
 E nós retornamos esse valor!
 
-```java
-```
-
-### DoFilterInternal
+### DoFilterInternal (Detalhar mais o método)
 
 É o método do filtro em sí.
 
 Iremos criar uma variável token, utilizando o método [Recover Token](#recover-token).
 
 Criar outra variável para login, onde iremos utilizar o Service juntamente com o método de validação (validateToken).
-Essa variável será em suma o email (que é o que é retornado no nosso método).
+
+Essa variável será em suma é o email (que é o que é retornado no nosso método).
+
+❗❗Não confunda, o ``generateToken`` do TokenService gera um token. O ```validateToken`` recebe o token gerado e valida,
+retornando o email autenticado.
 
 Depois um if, verificando se esse login não está nulo. Caso não esteja, iremos:
 
 1. Procurar o User pelo email;
-2. Criar um variável de authorities com uma coleção de ROLES. Neste caso, será só USER (visto que é uma aplicação mais
-   simples);
-3. Criar um objeto de autenticação, instanciando um new ``UsernamePasswordAuthenticationToken(user, null, authorities)``.
+2. Criar uma Lista de SimpleGrantedAuthority, pegando as roles do User e mapeando elas para SimpleGrantedAuthority.
+3. Criar um objeto de autenticação, instanciando um new ``UsernamePasswordAuthenticationToken(login, null, authorities)``.
 4. Após criar esse objeto de autenticação, settaremos o SecurityContextHolder.getContext().setAuthentication(variável de
    autenticação aqui).
 
 Esse SecurityContextHolder é o contexto de segurança do Spring Security! Cada componente do Security é responsável por
 uma etapa, e elas vão alimentando o contexto do Security, para que ele saiba o que ele já validou ou não e salvar
 as informações do Usuário que já estiver autenticada.
-
-```java
-```
 
 RESUMO:
 
@@ -254,6 +322,23 @@ utilizando a propria exceção do Spring Security (UsernameNotFoundException).
 Lembrando, o retorno é um UserDetails (um user na visão do Spring Security), não user entidade. Passaremos no retorno
 o email, password e o array de roles.
 
+```java
+@Component
+public class CustomUserDetailsService implements UserDetailsService {
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @Override
+    public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
+       User user = userRepository.findByEmail(username)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+
+        return new org.springframework.security.core.userdetails.User(user.getEmail(), user.getPassword(), new ArrayList<>());
+
+    }
+}
+```
 
 # SecurityConfig
 
@@ -282,12 +367,15 @@ public class SecurityConfig {
               .authorizeHttpRequests(authorize -> authorize
                               .requestMatchers(HttpMethod.POST, "/auth/login").permitAll()
                               .requestMatchers(HttpMethod.POST, "/users/register").permitAll()
-                              .anyRequest().authenticated()
+                              .requestMatchers(HttpMethod.PUT, "/users/**").hasRole("ADMIN")
+                              .requestMatchers(HttpMethod.DELETE, "/users/**").hasRole("ADMIN")
+                              .anyRequest().authenticated() //qualquer outra requisicao, tem que estar autenticado
 
-                                //caso queira liberar endpoint do H2
-                              //.requestMatchers("/h2-console/**").permitAll()
+                      //caso queira liberar endpoint do H2
+                      //.requestMatchers("/h2-console/**").permitAll()
               )
-                //caso queira liberar endpoint do H2
+              //caso queira liberar endpoint do H2
+
               .headers(headers -> headers
                       .frameOptions(frameOptions -> frameOptions.disable())
               )
@@ -317,11 +405,16 @@ Diz para o Spring que essa classe é responsável por cuidar da configuração/s
 
 ### Método securityFilterChain
 
+#### csrf(csrf -> csrf.disable())
+
+Esta linha desativa a proteção CSRF (Cross-Site Request Forgery), o que é comum em APIs REST. Em aplicativos que não 
+utilizam sessões e que dependem de tokens (como JWT), desabilitar o CSRF é uma prática comum.
+
 #### sessionManagement
 
 É stateless (visto que é uma aplicação REST). Ou seja, toda API RESTful é stateless, logo, não guardam estado de login
-dentro delas. Toda vez que o usuário bater na aplicação, ele precisa bater o token de autenticação, não teremos um banco
-de dados temporário para saber quem já se autenticou.
+dentro delas. Portanto, toda vez que o usuário logar na aplicação, ele precisa bater o token de autenticação, não 
+teremos um banco de dados temporário para saber quem já se autenticou.
 
 #### authorizeHttpRequests
 
@@ -329,11 +422,34 @@ Colocamos aquele parte de ``.authorizeHttpRequests()``, para dizer que os endpoi
 não precisam de autenticação, porque por padrão quando adicionamos o Spring Security na nossa aplicação ele já bloqueia 
 todos os endpoints. Então especificamente, estamos liberando esses dois.
 
-#### anyRequests
+#### requestMatchers hasRole 'ADMIN'
+
+Restrição por role ADMIN: A parte crítica é essa. Somente usuários com a role ADMIN poderão fazer PUT ou DELETE nos 
+endpoints /users/**. Isso garante que apenas administradores possam realizar essas operações.
+
+#### anyRequest().authenticated()
 
 Aqui dizemos que, no tocante aos outros endpoints, os usuários precisam estar autenticados.
 
-#### addBefore
+#### Liberando o banco H2
+
+Caso queira liberar o banco H2, insira isso abaixo de ``anyRequest()``:
+
+```java
+.requestMatchers("/h2-console/**").permitAll()
+```
+
+E depois:
+
+```java
+.headers(headers -> headers
+    .frameOptions(frameOptions -> frameOptions.disable())
+)
+```
+
+![img_4.png](img_4.png)
+
+#### addFilterBefore
 
 Por fim, passamos um método ``.addBefore()``, passando o SecurityFilter. Ou seja, antes de qualquer coisa do método
 (essa parte de autorização acima), iremos adicionar esse filtro, ele rodará antes.
@@ -347,8 +463,8 @@ continuar para o Controller, caso contrário será barrado, retornando um 403.
 
 Irá servir para criar o Bean das duas classes.
 
-PasswordEncoder iremos utilizar no Controller, para encondar a senha (para não salvar a password como String) no banco
-de dados.
+PasswordEncoder iremos utilizar no Controller, para encondar a senha (para não salvar a password como String bruta) 
+no banco de dados.
 
 AuthenticationManager usaremos somente para o Spring Security conseguir funcionar.
 
@@ -356,9 +472,11 @@ AuthenticationManager usaremos somente para o Spring Security conseguir funciona
 
 Receberá o UserRepository + PasswordEncoder + TokenService.
 
+Criaremos um método para autenticar, ele irá retornar um ``LoginResponseDTO`` e receberá ``LoginRequestDTO``.
+
 Instanciaremos um User pelo seu email.
 
-Faremos a lógica de negócio, testando se a senha que foi passada como parâmetro é a senha do usuário existente no banco
+Faremos a lógica de negócio, testando se a senha passada como parâmetro é a senha do usuário existente no banco
 de dados.
 
 Se sim, iremos criar um Token de autenticação.
@@ -367,54 +485,271 @@ Se não, lançaremos uma exceção customizada (retornando BAD_REQUEST).
 
 ![img_3.png](img_3.png)
 
+## DTOS
+
+Como sempre, um para resposta (que irá no Postman) e outro que iremos receber da camada de controller.
+
+### LoginResponseDTO
+
+```java
+public record LoginResponseDTO(String name, String token) {}
+```
+
+### LoginRequestDTO
+
+```java
+public record LoginRequestDTO(String email, String password) {}
+```
+
 # AuthController
 
 Será responsável por receber as requisições de login.
 
-Quais serão as requisições de login? E-mail e senha. Portanto, criaremos os nossos requests e Responses com as 
+Quais serão as requisições de login? E-mail e senha. Portanto, criaremos os nossos requests e responses com as 
 informações necessárias.
 
 Teremos um LoginRequestDTO e LoginResponseDTO.
 
-## LoginRequestDTO
-
-```java
-```
-
-## LoginResponseDTO
-
-```java
-```
-
 ## Método login
 
-![img_2.png](img_2.png)
+```java
+@RestController
+@RequestMapping(value = "/auth")
+public class AuthController {
+
+    @Autowired
+    private AuthService authService;
+
+
+    @PostMapping(value = "/login")
+    public ResponseEntity<LoginResponseDTO> login(@RequestBody LoginRequestDTO loginRequestDTO) {
+        LoginResponseDTO response = authService.authenticate(loginRequestDTO);
+
+        return ResponseEntity.ok(response);
+    }
+}
+```
 
 # UserService
 
 Receberá o UserRepository, RoleRepository, PasswordEncoder e TokenService.
 
+Aqui realizaremos todo o CRUD + validação de dados para lançamento de exceções customizadas.
+
 ## CreateUser
+
+```java
+    public UserRegistrationResponseDTO createUser(UserRegistrationRequestDTO userRegistrationRequestDTO) {
+        //antes de tudo, chegar se email já existe no banco de dados, se sim, continua
+
+        if (userRepository.existsByEmail(userRegistrationRequestDTO.email())) {
+            throw new EmailInUseException("Email already in use.");
+        }
+
+        if (userRegistrationRequestDTO.password().length() < 6) {
+            throw new PasswordException("Password must be at least 6 characters.");
+        }
+
+        User user = new User();
+        //adicionar validações para exceção
+        user.setName(userRegistrationRequestDTO.name());
+        user.setEmail(userRegistrationRequestDTO.email());
+        user.setPassword(passwordEncoder.encode(userRegistrationRequestDTO.password()));
+
+        user.setRole("ROLE_COMMON");
+
+        //lembrar de arrumar no SecurityConfig os endpoints com as roles
+
+        userRepository.save(user);
+
+        String token = tokenService.generateToken(user);
+
+        return new UserRegistrationResponseDTO(
+                user.getId(),
+                user.getName(),
+                user.getEmail(),
+                user.getPassword(),
+                token
+        );
+    }
+```
 
 ## FindAllPaged
 
+```java
+    public Page<UserPageableResponseDTO> findAllPageable(Pageable pageable) {
+        Page<User> users = userRepository.findAll(pageable);
+
+        List<UserPageableResponseDTO> usersDtos = users.getContent().stream()
+                .map(user -> new UserPageableResponseDTO(user.getId(), user.getName(), user.getEmail()))
+                .collect(Collectors.toList());
+
+        return new PageImpl<>(usersDtos, pageable, users.getTotalElements());
+    }
+```
+
 ## UpdateUser
+
+```java
+    public UserChangesResponseDTO update(String id, UserChangesRequestDto userChangesRequestDto) {
+   //implementar metodo para buscar por ID lançando exceção automaticamente
+   User user = userRepository.findById(id)
+           .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+
+   user.setName(userChangesRequestDto.name());
+   user.setEmail(userChangesRequestDto.email());
+   userRepository.save(user);
+
+   return new UserChangesResponseDTO(
+           user.getId(),
+           user.getName(),
+           user.getEmail()
+   );
+}
+```
 
 ## FindUserById
 
+```java
+    public UserInformationsResponseDTO findById(String id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+
+        return new UserInformationsResponseDTO(
+                user.getId(),
+                user.getName(),
+                user.getEmail(),
+                user.getRoles());
+    }
+```
+
 ## DeleteUser
+
+```java
+    public void deleteById(String id) {
+        if (!userRepository.existsById(id)) {
+            throw new UsernameNotFoundException("User not found.");
+        }
+        userRepository.deleteById(id);
+    }
+```
+
+## InsertRoleOnUser
+
+```java
+    @Secured(("ROLE_ADMIN"))
+    public UserWithNewRoleResponseDTO insertRoleOnUser(String id, UserWithNewRoleRequestDTO userWithNewRoleRequestDTO) throws AccessDeniedException {
+
+        if (!userRepository.existsById(id)) {
+            throw new UsernameNotFoundException("User not found.");
+        }
+
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+
+        boolean isAdmin = authentication.getAuthorities().stream()
+                .anyMatch(authority -> authority.getAuthority().equals("ROLE_ADMIN"));
+
+        if (!isAdmin) {
+            throw new AccessDeniedException("You dont have the permission to do this action.");
+        }
+
+        User user = userRepository.getReferenceById(id);
+        Set<Role> roles = new HashSet<>(roleRepository.findByNameIn(userWithNewRoleRequestDTO.roles()));
+
+        user.getRoles().addAll(roles);
+
+        userRepository.save(user);
+
+        return new UserWithNewRoleResponseDTO(
+                user.getId(),
+                user.getName(),
+                user.getEmail(),
+                user.getRoles().stream().map(Role::getName).collect(Collectors.toSet())
+        );
+    }
+```
 
 # UserController
 
 ## CreateUser
 
+```java
+    @PostMapping("/register")
+    public ResponseEntity<UserRegistrationResponseDTO> createUser(@RequestBody UserRegistrationRequestDTO userRegistrationRequestDTO) {
+
+        UserRegistrationResponseDTO responseDTO = userService.createUser(userRegistrationRequestDTO);
+
+        URI uri = ServletUriComponentsBuilder
+                .fromCurrentRequest()
+                .path("/{id}")
+                .buildAndExpand(responseDTO.id())
+                .toUri();
+
+        return ResponseEntity.created(uri).body(responseDTO);
+    }
+```
+
 ## FindAllPaged
+
+```java
+    @PreAuthorize("hasRole('COMMON')")
+    @GetMapping
+    public ResponseEntity<Page<UserPageableResponseDTO>> findAllPageable(Pageable pageable) {
+        Page<UserPageableResponseDTO> users = userService.findAllPageable(pageable);
+
+        return ResponseEntity.ok(users);
+    }
+```
 
 ## UpdateUser
 
+```java
+    @PreAuthorize("hasRole('ADMIN')")
+@PutMapping(value = "/{id}")
+public ResponseEntity<UserChangesResponseDTO> update(@PathVariable String id, @RequestBody UserChangesRequestDto userChangesRequestDto) {
+   UserChangesResponseDTO userChanged = userService.update(id, userChangesRequestDto);
+
+   return ResponseEntity.ok(userChanged);
+}
+```
+
 ## FindUserById
 
+```java
+    @PreAuthorize("hasRole('COMMON')")
+    @GetMapping(value = "/{id}")
+    public ResponseEntity<UserInformationsResponseDTO> findById(@PathVariable String id) {
+        UserInformationsResponseDTO response = userService.findById(id);
+
+        return ResponseEntity.ok(response);
+    }
+```
+
 ## DeleteUser
+
+```java
+    @PreAuthorize("hasRole('ADMIN')")
+    @DeleteMapping(value = "{id}")
+    public ResponseEntity<Void> deleteById(@PathVariable String id) {
+        userService.deleteById(id);
+
+        return ResponseEntity.noContent().build();
+    }
+```
+
+## InsertRoleOnUser
+
+```java
+ @PreAuthorize("hasRole('ADMIN')")
+    @PutMapping(value = "/insert/{id}")
+    public ResponseEntity<UserWithNewRoleResponseDTO> insertRoleOnUser(@PathVariable String id,
+                                                                      @RequestBody UserWithNewRoleRequestDTO userWithNewRoleRequestDTO) throws AccessDeniedException {
+
+        UserWithNewRoleResponseDTO userWithNewRole = userService.insertRoleOnUser(id, userWithNewRoleRequestDTO);
+
+        return ResponseEntity.ok(userWithNewRole);
+    }
+```
 
 # Adendos no projeto
 
@@ -495,3 +830,75 @@ CREATE TABLE tb_user (
 ### Insert
 
 Serão feitos pelo Postman.
+
+
+
+# Endpoints postman
+
+## CreateUser
+
+```http request
+POST http://{{host}}/users/register
+
+{
+  "name": "Olavo Moreira",
+  "email": "olavo@gmail.com",
+  "password": "password123"
+}
+```
+
+## Login
+
+```http request
+POST http://{{host}}/auth/login
+
+{
+  "email": "olavo@gmail.com",
+  "password": "password123"
+}
+```
+
+## FindAllPaged
+
+## FindById
+
+Authorization: Bearer Token (ROLE_COMMON) at least.
+
+```http request
+GET http://{{host}}/users/{{id}}}}
+```
+
+## Delete
+
+Authorization: Bearer Token (ADMIN)
+
+```http request
+DELETE http://{{host}}/users/{{id}}}}
+```
+
+## UpdateUser
+
+Authorization: Bearer Token (ADMIN)
+
+```http request
+PUT http://{{host}}/users/{{id}}}}
+
+{
+  "name": "Olavo Moreira",
+  "email": "olavo@example.com",
+  "password": "password123"
+}
+```
+
+## InsertUserRoles
+
+Authorization: Bearer Token (ADMIN)
+
+```http request
+
+PUT http://{{host}}/users/insert-role/{{id}}}}
+
+{
+  "roles": ["ROLE_COMMON", "ROLE_ADMIN", "ROLE_OPERATOR"]
+}
+```
