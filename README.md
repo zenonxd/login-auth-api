@@ -255,12 +255,11 @@ Lembrando, o retorno é um UserDetails (um user na visão do Spring Security), n
 o email, password e o array de roles.
 
 
-
-
 # SecurityConfig
 
-Classe de configuração final para o Spring Security. Irá juntar tudo que montamos até agora, adicionando o filtro (
-proxy), em cada uma das requisições.
+Classe de configuração final para o Spring Security. 
+
+Ela irá juntar tudo que montamos até agora, adicionando o filtro (proxy), em cada uma das requisições.
 
 A classe ficará em infra.security.
 
@@ -269,35 +268,44 @@ A classe ficará em infra.security.
 @EnableWebSecurity
 public class SecurityConfig {
 
-    @Autowired
-    private CustomUserDetailsService userDetailsService;
+   @Autowired
+   private CustomUserDetailsService customUserDetailsService;
 
-    @Autowired
-    SecurityFilter securityFilter;
+   @Autowired
+   private SecurityFilter securityFilter;
 
-    @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
-        http
-                .csrf(csrf -> csrf.disable())
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers(HttpMethod.POST, "/auth/login").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/auth/register").permitAll()
-                        .anyRequest().authenticated()
-                )
-                .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
-        return http.build();
-    }
+   @Bean
+   public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+      http
+              .csrf(csrf -> csrf.disable())
+              .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+              .authorizeHttpRequests(authorize -> authorize
+                              .requestMatchers(HttpMethod.POST, "/auth/login").permitAll()
+                              .requestMatchers(HttpMethod.POST, "/users/register").permitAll()
+                              .anyRequest().authenticated()
 
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
+                                //caso queira liberar endpoint do H2
+                              //.requestMatchers("/h2-console/**").permitAll()
+              )
+                //caso queira liberar endpoint do H2
+              .headers(headers -> headers
+                      .frameOptions(frameOptions -> frameOptions.disable())
+              )
 
-    @Bean
-    public AuthenticationManager authenticationManager(AuthenticationConfiguration authenticationConfiguration) throws Exception {
-        return authenticationConfiguration.getAuthenticationManager();
-    }
+              .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
+
+      return http.build();
+   }
+
+   @Bean
+   public PasswordEncoder passwordEncoder() {
+      return new BCryptPasswordEncoder();
+   }
+
+   @Bean
+   public AuthenticationManager authenticationManager(AuthenticationConfiguration authenticationConfiguration) throws Exception {
+      return authenticationConfiguration.getAuthenticationManager();
+   }
 }
 ```
 
@@ -317,7 +325,7 @@ de dados temporário para saber quem já se autenticou.
 
 #### authorizeHttpRequests
 
-Colocamos aquele parte de ``.authorizeHttpRequests()``, para dizer que os endpoints ``/auth/login`` e ``/auth/register``,
+Colocamos aquele parte de ``.authorizeHttpRequests()``, para dizer que os endpoints ``/auth/login`` e ``/users/register``,
 não precisam de autenticação, porque por padrão quando adicionamos o Spring Security na nossa aplicação ele já bloqueia 
 todos os endpoints. Então especificamente, estamos liberando esses dois.
 
@@ -335,10 +343,6 @@ Por fim, passamos um método ``.addBefore()``, passando o SecurityFilter. Ou sej
 Através do addBefore, poderemos verificar o header de "authorization", vendo se o usuário passou. Se estiver, iremos
 continuar para o Controller, caso contrário será barrado, retornando um 403.
 
-
-
-
-
 ### PasswordEncoder & AuthenticationManager
 
 Irá servir para criar o Bean das duas classes.
@@ -347,8 +351,6 @@ PasswordEncoder iremos utilizar no Controller, para encondar a senha (para não 
 de dados.
 
 AuthenticationManager usaremos somente para o Spring Security conseguir funcionar.
-
-
 
 # AuthService
 
@@ -359,79 +361,137 @@ Instanciaremos um User pelo seu email.
 Faremos a lógica de negócio, testando se a senha que foi passada como parâmetro é a senha do usuário existente no banco
 de dados.
 
-Se sim, iremos criar um Token.
+Se sim, iremos criar um Token de autenticação.
 
 Se não, lançaremos uma exceção customizada (retornando BAD_REQUEST).
 
-# UserService
-
-Receberá o UserRepository + PasswordEncoder + TokenService.
-
-## CreateUser
-
-Criar um Optional de User com o findByEmail, passando o email que virá do Controller.
-
-Se esse User estiver vazio, iremos fazer a lógica de criação:
-
-1. Instanciando um User;
-2. Settar sua password, utilizando o passwordEnconder para encondar a mesma;
-3. Settar email e name;
-4. Salvar no banco;
-5. Depois de salvar, criar um String token, utilizando o tokenService com o método generateToken, passando nosso Usuário;
-6. Retornar o nosso response.
-
-## FindUserById
-
-## UpdateUser
-
-## DeleteUser
+![img_3.png](img_3.png)
 
 # AuthController
 
-Será responsável por receber as requisições de login e register.
+Será responsável por receber as requisições de login.
 
 Quais serão as requisições de login? E-mail e senha. Portanto, criaremos os nossos requests e Responses com as 
 informações necessárias.
+
+Teremos um LoginRequestDTO e LoginResponseDTO.
 
 ## LoginRequestDTO
 
 ```java
 ```
 
-## LoginResponseDTO 
-
-Excepcionalmente, retornará name e token (porque neste caso, é o que o frontend espera).
+## LoginResponseDTO
 
 ```java
 ```
 
-## UserRegisterRequestDTO
+## Método login
 
-```java
-```
+![img_2.png](img_2.png)
 
+# UserService
 
-## UserRegisterResponseDTO
+Receberá o UserRepository, RoleRepository, PasswordEncoder e TokenService.
 
-```java
-```
+## CreateUser
 
-## Método Login
+## FindAllPaged
 
-Lógica de sempre, instanciando um LoginResponse e usando o método de login advindo do AuthService passando o request.
+## UpdateUser
 
-Se tudo der ok, retornar ResponseEntity com o name + token. Caso contrário, BAD_REQUEST.
+## FindUserById
 
-## Método Register
-
-Irá receber dessa vez um name, email e senha. Portanto, criar um UserRegisterRequestDTO e UserRegisterResponseDTO.
-
-Lógica de sempre, instanciando um UserResponseDTO e usando o método de register advindo do UserService passando o requestDTO.
-
-Se tudo der ok, retornar ResponseEntity com o id, name + token. Caso contrário, BAD_REQUEST.
+## DeleteUser
 
 # UserController
 
-Criar endpoints do UserService (CRUD) padrão e testar para ver se estão bloqueados.
+## CreateUser
 
-CREATE/DELETE/UPDATE devem ser somente para ADMIN.
+## FindAllPaged
+
+## UpdateUser
+
+## FindUserById
+
+## DeleteUser
+
+# Adendos no projeto
+
+1. O banco de dados será PostgreSQL
+2. Utilizaremos flyway para fazer as migrations e criar as tabelas
+3. Criamos uma entidade com Role que será adicionada ao User com ManyToMany.
+4. A classe SecurityFilter agora, ela retorna uma Lista de SimpleGrantedAuthority que pegará as roles de user, e irá
+mapeá-las:
+
+![img.png](img.png)
+
+6. Em UserService, instanciaremos uma Role, buscando-a por name (no seu RoleRepository) e settando a role do usuário
+antes de salvar:
+
+![img_1.png](img_1.png)
+
+
+```xml
+<dependency>
+    <groupId>org.flywaydb</groupId>
+    <artifactId>flyway-core</artifactId>
+</dependency>
+```
+
+## Criando tabela Role
+
+```sql
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+CREATE TABLE tb_role (
+
+    /*
+    get_random_uuid é uma função
+    de uma extensão do Postgres
+    onde iremos instalar depois.
+    Ela irá gerar uma random UUID
+    */
+    id VARCHAR DEFAULT gen_random_uuid() PRIMARY KEY,
+    name VARCHAR(30) NOT NULL UNIQUE
+);
+````
+
+### Insert
+
+```sql
+INSERT INTO tb_role (name) 
+VALUES 
+    ('ROLE_OPERATOR'),
+    ('ROLE_COMMON'),
+    ('ROLE_ADMIN');
+```
+
+## Criando tabela User
+
+```sql
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+CREATE TABLE tb_user (
+
+    /*
+    get_random_uuid é uma função
+    de uma extensão do Postgres
+    onde iremos instalar depois.
+    Ela irá gerar uma random UUID
+    */
+    id VARCHAR DEFAULT gen_random_uuid() PRIMARY KEY,
+    name VARCHAR(30) NOT NULL,
+    email VARCHAR(30) NOT NULL,
+    password VARCHAR(100) NOT NULL,
+    role_id varchar,
+    CONSTRAINT fk_role
+                     FOREIGN KEY (role_id)
+                     REFERENCES tb_role(id)
+                     ON DELETE SET NULL
+);
+```
+
+### Insert
+
+Serão feitos pelo Postman.
