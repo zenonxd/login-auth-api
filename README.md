@@ -902,3 +902,88 @@ PUT http://{{host}}/users/insert-role/{{id}}}}
   "roles": ["ROLE_COMMON", "ROLE_ADMIN", "ROLE_OPERATOR"]
 }
 ```
+
+# Colocando o projeto em Docker
+
+Ao rodar o DockerCompose, ele irá também rodar o dockerfile criando a imagem.
+
+Caso dê algum problema para se conectar a database, aloque as variáveis diretamente no container:
+
+![img_5.png](img_5.png)
+
+A ideia é que fique rodando a db (5432) e o app (8080)
+
+![img_7.png](img_7.png)
+
+## Comandos:
+
+>docker ps ver o que tá rodando
+
+![img_6.png](img_6.png)
+
+> docker exec -it postgres_db psql -U postgres -d loginauthapi
+
+Listar tabela
+>\dt
+
+Para sair do PostgreSQL e voltar para o terminal do seu sistema, basta digitar o comando:
+
+>\q
+
+
+## Dockerfile
+
+```dockerfile
+FROM amazoncorretto:21
+
+LABEL authors="olavo"
+
+WORKDIR /app
+
+# Copiar o JAR gerado pelo build para dentro do contêiner
+# O arquivo JAR será copiado para o contêiner. O caminho depende de onde você gerar o JAR.
+COPY target/login-auth-api-0.0.1-SNAPSHOT.jar app.jar
+
+# Expor a porta onde o Spring Boot será executado
+EXPOSE 8080
+
+CMD ["java", "-jar", "app.jar"]
+```
+
+## Dockercompose-yml
+
+No properties, a URL é aquela padrão do JDBC para conectar no postgres. Aqui, usamos ``db:``.
+
+```dockerfile
+version: '3.8'
+services:
+  app:
+    build:
+      context: ../login-auth-api
+      dockerfile: Dockerfile
+    container_name: spring_app_corretto21
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/loginauthapi
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      SECRET_KEY: ${SECRET_KEY}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15
+    container_name: postgres_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: loginauthapi
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+```
